@@ -18,7 +18,3 @@ class TCPeeringAdmin(admin.ModelAdmin):
     list_display = ('text', 'category', 'created_at', 'updated_at')
     search_fields = ('text__text', 'category__category_name')
     ordering = ('-text__created_at',)
-
-admin.site.register(TextCategories)
-admin.site.register(Texts)
-admin.site.register(TCPeering)

@@ -9,12 +9,17 @@ DEBUG = True
 ALLOWED_HOSTS = ['api.juany.kr', '127.0.0.1', 'localhost']
 
 INSTALLED_APPS = [
+    'text.apps.TextConfig',
+    'images.apps.ImagesConfig',
+    'jsons.apps.JsonsConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'drf_yasg',
 ]
 
 MIDDLEWARE = [
