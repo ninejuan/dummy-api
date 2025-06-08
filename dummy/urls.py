@@ -9,16 +9,14 @@ schema_view = get_schema_view(
         title="Dummy API",
         default_version="v1",
         description="Dummy API documentation",
-        terms_of_service="https://www.google.com/policies/terms/",
-        contact=openapi.Contact(email="contact@example.com"),
-        license=openapi.License(name="BSD License"),
+        contact=openapi.Contact(email="contact+dummy@juany.kr"),
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),
 )
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('admin/', admin.site.urls),    
     path('text/', include('text.urls')),
     path('images/', include('images.urls')),
     path('jsons/', include('jsons.urls')),
