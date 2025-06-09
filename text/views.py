@@ -126,27 +126,57 @@ def get_all_texts(request, page, limit):
     operation_description="카테고리별 텍스트 조회",
     responses={
         200: openapi.Response(description="텍스트 조회 성공", schema=openapi.Schema(
-            type=openapi.TYPE_ARRAY,
-            items=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='텍스트 ID'),
-                    'text': openapi.Schema(type=openapi.TYPE_STRING, description='텍스트 내용'),
-                    'category': openapi.Schema(type=openapi.TYPE_OBJECT, description='카테고리 정보'),
-                    'created_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time', description='생성 시간'),
-                    'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time', description='수정 시간')
-                }
-            )
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'total_count': openapi.Schema(type=openapi.TYPE_INTEGER, description='전체 텍스트 수'),
+                'current_page': openapi.Schema(type=openapi.TYPE_INTEGER, description='현재 페이지 번호'),
+                'total_pages': openapi.Schema(type=openapi.TYPE_INTEGER, description='전체 페이지 수'),
+                'texts': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'id': openapi.Schema(type=openapi.TYPE_INTEGER, description='텍스트 ID'),
+                            'text': openapi.Schema(type=openapi.TYPE_STRING, description='텍스트 내용'),
+                            'category': openapi.Schema(type=openapi.TYPE_OBJECT, description='카테고리 정보'),
+                            'created_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time', description='생성 시간'),
+                            'updated_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time', description='수정 시간')
+                        }
+                    )
+                )
+            }
         )),
         404: openapi.Response(description="텍스트가 없음")
     },
 )
 @require_http_methods(["GET"])
-def get_texts_by_category(request, category_id):
-    values = Texts.objects.filter(category_id=category_id)
-    if not values.exists():
-        return JsonResponse({'error': '해당 카테고리의 텍스트가 없습니다'}, status=404)
-    return JsonResponse([value.to_dict() for value in values], safe=False)
+def get_texts_by_category(request, category_id, page, limit):
+    try:
+        page = int(page)
+        limit = int(limit)
+        
+        values = Texts.objects.filter(category_id=category_id)
+        if not values.exists():
+            return JsonResponse({'error': '해당 카테고리의 텍스트가 없습니다'}, status=404)
+            
+        total_count = values.count()
+        start_index = (page - 1) * limit
+        end_index = start_index + limit
+        
+        paginated_values = values[start_index:end_index]
+        
+        response_data = {
+            'total_count': total_count,
+            'current_page': page,
+            'total_pages': (total_count + limit - 1) // limit,
+            'texts': [value.to_dict() for value in paginated_values]
+        }
+        
+        return JsonResponse(response_data, safe=False)
+    except ValueError:
+        return JsonResponse({'error': '페이지 번호와 한 페이지당 항목 수는 숫자여야 합니다'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @csrf_exempt
 @api_view(['GET'])

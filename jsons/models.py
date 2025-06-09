@@ -12,7 +12,7 @@ class JsonCategory(models.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'category_name': self.category_name,
+            'category': self.category_name,
             'created_at': self.created_at,
             'updated_at': self.updated_at
         }
