@@ -15,6 +15,7 @@ INSTALLED_APPS = [
     'accounts',
     'yaml_data',
     'code_samples',
+    'json_templates',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

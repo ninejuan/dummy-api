@@ -1,11 +1,19 @@
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
-from .models import Jsons, JsonCategory
+from .models import JsonCategory, Jsons, JsonBannedWords
 from django.views.decorators.http import require_http_methods
+import json
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework import viewsets
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from .serializers import JsonCategorySerializer, JsonsSerializer, JsonBannedWordsSerializer
+import random
+import korcen
 
 @csrf_exempt
 @api_view(['GET'])
@@ -269,3 +277,201 @@ def get_random_json(request):
     
     random_json = random.choice(jsons)
     return JsonResponse(random_json.to_dict())
+
+def check_json_profanity(json_data):
+    """JSON 데이터 내의 욕설 및 금지어 검사"""
+    def check_text_recursively(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, str):
+                    profanity_result = check_profanity(value)
+                    if not profanity_result['is_clean']:
+                        return profanity_result
+                elif isinstance(value, (dict, list)):
+                    result = check_text_recursively(value)
+                    if result and not result['is_clean']:
+                        return result
+        elif isinstance(obj, list):
+            for item in obj:
+                if isinstance(item, str):
+                    profanity_result = check_profanity(item)
+                    if not profanity_result['is_clean']:
+                        return profanity_result
+                elif isinstance(item, (dict, list)):
+                    result = check_text_recursively(item)
+                    if result and not result['is_clean']:
+                        return result
+        return {'is_clean': True, 'is_profane': False, 'found_banned_words': []}
+
+    return check_text_recursively(json_data)
+
+def check_profanity(text):
+    """욕설 및 금지어 검사"""
+    # korcen으로 욕설 검사
+    profanity_checker = korcen.ProfanityChecker()
+    is_profane = profanity_checker.check(text)
+    
+    # 금지어 검사
+    banned_words = JsonBannedWords.objects.all()
+    found_banned_words = []
+    
+    for banned_word in banned_words:
+        if banned_word.word.lower() in text.lower():
+            found_banned_words.append(banned_word.word)
+    
+    return {
+        'is_profane': is_profane,
+        'found_banned_words': found_banned_words,
+        'is_clean': not is_profane and len(found_banned_words) == 0
+    }
+
+class JsonCategoryViewSet(viewsets.ModelViewSet):
+    queryset = JsonCategory.objects.all()
+    serializer_class = JsonCategorySerializer
+    
+    @action(detail=True, methods=['get'])
+    def jsons(self, request, pk=None):
+        category = self.get_object()
+        jsons_data = category.jsons.all()
+        serializer = JsonsSerializer(jsons_data, many=True)
+        return Response(serializer.data)
+
+class JsonsViewSet(viewsets.ModelViewSet):
+    queryset = Jsons.objects.all()
+    serializer_class = JsonsSerializer
+    
+    def get_queryset(self):
+        # 승인된 JSON만 조회
+        return Jsons.objects.filter(is_approved=True)
+    
+    @action(detail=False, methods=['post'])
+    def create_user_json(self, request):
+        """사용자가 JSON 등록 (로그인 필요)"""
+        if not request.user.is_authenticated:
+            return Response({'error': '로그인이 필요합니다'}, status=401)
+            
+        try:
+            title = request.data.get('title', '').strip()
+            json_data = request.data.get('jsonData')
+            category_id = request.data.get('category_id')
+            
+            if not title or not json_data:
+                return Response({'error': '제목과 JSON 데이터가 필요합니다'}, status=400)
+            
+            # JSON 데이터 검열
+            profanity_result = check_json_profanity(json_data)
+            
+            if not profanity_result['is_clean']:
+                # 검열 실패 시에도 저장하되 승인되지 않은 상태로
+                json_obj = Jsons.objects.create(
+                    title=title,
+                    jsonData=json_data,
+                    category_id=category_id,
+                    user=request.user,
+                    is_approved=False,
+                    is_flagged=True,
+                    flagged_reason=f"욕설 포함: {profanity_result['is_profane']}, 금지어: {', '.join(profanity_result['found_banned_words'])}"
+                )
+                
+                return Response({
+                    'error': '욕설이나 금지어가 포함되어 승인되지 않았습니다',
+                    'flagged_reason': json_obj.flagged_reason,
+                    'json_id': json_obj.id
+                }, status=403)
+            
+            # 검열 통과 시 정상 저장
+            json_obj = Jsons.objects.create(
+                title=title,
+                jsonData=json_data,
+                category_id=category_id,
+                user=request.user,
+                is_approved=True,
+                is_flagged=False
+            )
+            
+            return Response({
+                'message': 'JSON이 성공적으로 등록되었습니다',
+                'json': json_obj.to_dict()
+            }, status=201)
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+    
+    @action(detail=False, methods=['get'])
+    def my_jsons(self, request):
+        """내가 등록한 JSON 조회"""
+        if not request.user.is_authenticated:
+            return Response({'error': '로그인이 필요합니다'}, status=401)
+            
+        my_jsons = Jsons.objects.filter(user=request.user)
+        serializer = self.get_serializer(my_jsons, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def as_json(self, request, pk=None):
+        json_obj = self.get_object()
+        try:
+            return Response({
+                'id': json_obj.id,
+                'title': json_obj.title,
+                'category': json_obj.category.name if json_obj.category else None,
+                'json_data': json_obj.jsonData,
+                'user': json_obj.user.username if json_obj.user else None,
+                'created_at': json_obj.created_at
+            })
+        except Exception as e:
+            return Response({'error': f'JSON 처리 오류: {str(e)}'}, status=400)
+    
+    @action(detail=False, methods=['post'])
+    def validate_json(self, request):
+        """JSON 유효성 검사"""
+        json_data = request.data.get('jsonData')
+        if not json_data:
+            return Response({'error': 'JSON 데이터가 필요합니다'}, status=400)
+        
+        try:
+            # JSON 형식 검사
+            if isinstance(json_data, str):
+                json.loads(json_data)
+            
+            # 검열 검사
+            profanity_result = check_json_profanity(json_data)
+            
+            return Response({
+                'valid': True,
+                'is_clean': profanity_result['is_clean'],
+                'message': '유효한 JSON입니다.' if profanity_result['is_clean'] else '욕설이나 금지어가 포함되어 있습니다.'
+            })
+        except json.JSONDecodeError:
+            return Response({'valid': False, 'error': '잘못된 JSON 형식입니다'}, status=400)
+        except Exception as e:
+            return Response({'valid': False, 'error': str(e)}, status=400)
+
+class JsonBannedWordsViewSet(viewsets.ModelViewSet):
+    queryset = JsonBannedWords.objects.all()
+    serializer_class = JsonBannedWordsSerializer
+    
+    def create(self, request, *args, **kwargs):
+        if not request.user.is_staff:
+            return Response({'error': '관리자 권한이 필요합니다'}, status=403)
+            
+        word = request.data.get('word', '').strip()
+        reason = request.data.get('reason', '')
+        
+        if not word:
+            return Response({'error': '금지어가 필요합니다'}, status=400)
+        
+        if JsonBannedWords.objects.filter(word=word).exists():
+            return Response({'error': '이미 존재하는 금지어입니다'}, status=400)
+        
+        banned_word = JsonBannedWords.objects.create(
+            word=word,
+            reason=reason,
+            added_by=request.user
+        )
+        
+        return Response({
+            'message': '금지어가 추가되었습니다',
+            'word': word,
+            'reason': reason
+        }, status=201)
